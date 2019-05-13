@@ -10,6 +10,7 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <iomanip>
 using namespace std;
 
 //////////////////////////////////////////////////////////////////////
@@ -62,26 +63,23 @@ Network::Network(int inputs, int interneurons, int outputs, char * out_file_name
 	writeNetworkToFile( out_file_name );
 }
 
-Network::Network(std::string file_name) {
-	openLogFile();
-	int error = 0;
-
-	error = readNetworkFromFile( file_name );  // This function should return an error message for an improperly specified network.
-//	setNetworkNeuronActivation( 0.0 );
-	if(error == 1)	printf("Bad Network file specification in file %s.\n", file_name.c_str());  // if the file is bad print a warning
-}
-/*
-// This constructor Assumes a properly formatted data file.  It does no checking or corrections.
-Network::Network( char * file_name )
+Network::Network(std::string file_name, bool decider)
 {
-	openLogFile();
-	int error = 0;
-
-	error = readNetworkFromFile( file_name );  // This function should return an error message for an improperly specified network.
-//	setNetworkNeuronActivation( 0.0 );
-	if(error == 1)	printf("Bad Network file specification in file %s.\n", file_name);  // if the file is bad print a warning
+    int error = 0;
+	if (decider)
+    {
+        openLogFile();
+        error = readNetworkFromFile( file_name );  // This function should return an error message for an improperly specified network.
+        if(error == 1)	printf("Bad Network file specification in file %s.\n", file_name.c_str());  // if the file is bad print a warning
+    }
+    else
+    {
+        openMotorOutputFile();
+        error = readNetworkFromFileW( file_name );  // This function should return an error message for an improperly specified network.
+        if(error == 1)	printf("Bad Network file specification in file %s.\n", file_name.c_str());  // if the file is bad print a warning
+    }
 }
-*/
+
 
 Network::~Network()
 {
@@ -95,14 +93,32 @@ bool Network::openLogFile()
 	return logFile != NULL;
 }
 
+bool Network::openMotorOutputFile()
+{
+	printf("opening motorOutput file...\n");
+    motorOutputFile = fopen("motorOutput.txt", "w");
+	return motorOutputFile != NULL;
+}
+
 void Network::closeLogFile()
 {
 	fclose(logFile);
 }
 
+void Network::closeMotorOutputFile()
+{
+	fclose(motorOutputFile);
+}
+
 FILE* Network::getLogFile() {
 	return logFile;
 }
+
+FILE* Network::getMotorOutputFile() {
+	return motorOutputFile;
+}
+
+
 
 void Network::instantiateDefaultNetwork( void )
 {
@@ -198,6 +214,113 @@ void printDifferences(double* beforeMatrix, double* afterMatrix, int dimension) 
 	}
 }
 
+/* --------------------------------------------------
+
+  wilsonCycleNetwork
+  Similar to the cycleNetwork function however use different functions:
+  copyNeuronActivationsToNeuronOutputs(), wilsonActivation(), setNetworkOutput(), and
+  wilsonBoundNetworkOutputs().
+  Each call to wilsonCycleNetwork is 1 timestep.
+
+  */
+void Network::wilsonCycleNetwork(void)
+{
+    //Uses neuron activation values to start the oscillator at time step 0
+    if(timestep==0){
+        copyNeuronActivationsToNeuronOutputsW();
+        fprintf(motorOutputFile, "Timestep Motor A Motor B\n");
+    }
+
+    //Calculates the recurrent matrix multiplication sums to get the neuron outputs
+    wilsonActivation();
+//    //Takes the output neurons and sets them to the network outputs
+    setNetworkOuputW();
+//    //Bounds the network outputs between 0-1
+    wilsonBoundNetworkOutputs();
+
+//    copyWilsonOutputsToInputNeuronsOutput();
+//
+//    cycleNetwork();
+
+    timestep++;
+
+    fprintf(motorOutputFile, "%d %.4f %.4f\n", timestep, networkOutputsW[0], networkOutputsW[1]);
+    cout << setprecision(4);
+    cout << "Timestep:" << timestep;
+    cout << "  Motor A:" <<networkOutputsW[0]<< "     " << "Motor B:" <<networkOutputsW[1] <<endl;
+}
+/*
+void Network::printStuff()
+{
+    fprintf(motorOutputFile, "%d %.4f %.4f\n", timestep, networkOutputsW[0], networkOutputsW[1]);
+    cout << setprecision(4);
+    cout << "Timestep:" << timestep;
+    cout << "  Motor A:" <<networkOutputsW[0]<< "     " << "Motor B:" <<networkOutputsW[1] <<endl;
+}
+*/
+/* --------------------------------------------------
+
+    wilsonActivation
+    Dynamically allocates and array of size networkDimension-1 which is to ignore the input neuron
+    Takes the weight matrix and multiplies it by the output neuron values, which is stored in the neuron_value_array
+    After the summed values are then stored into each respective neuron's output
+
+  */
+
+void Network::wilsonActivation (void){
+
+    int neuron_number, source_neuron_number;
+    //dynamically allocate array to hold neuron sums
+    double neuron_value_array [networkWilsonDimension-1];
+
+    //multiplies the network weight matrix by previous neuron outputs and stores the values in the neuron_value_array
+    for( neuron_number = 0; neuron_number < networkWilsonDimension-1; ++neuron_number){
+
+		for( source_neuron_number = 0; source_neuron_number < networkWilsonDimension-1; ++source_neuron_number){
+
+            neuron_value_array[neuron_number]+= networkWeightsW[computeWeightIndexW(source_neuron_number+1, neuron_number+1)] * neuronOutputW[source_neuron_number+1];
+        }
+    }
+
+    //sets the neuron outputs to the sum calculated by the matrix multiplication
+    for(int i =0; i< networkWilsonDimension-1; i++){
+        neuronOutputW[i+1]=neuron_value_array[i];
+    }
+}
+
+
+/* --------------------------------------------------
+
+    wilsonBoundNetworkOutputs
+    Adds .5 to both outputs so that they are between 0 and 1
+    Also runs a check incase they become slightly out of bounds to squish the values to 0 or 1
+
+  */
+
+
+void Network::wilsonBoundNetworkOutputs( void)
+{
+        networkOutputsW[0]=networkOutputsW[0] + .5;
+        networkOutputsW[1]=networkOutputsW[1] +.5;
+        if(networkOutputsW[0]<0 || networkOutputsW[1]>.9998)
+            networkOutputsW[0]=0;
+
+        if(networkOutputsW[1]<0 || networkOutputsW[0]>.9998)
+            networkOutputsW[1]=0;
+        //copyWilsonOutputsToInputNeuronsOutput();
+
+}
+
+/*
+
+copyWilsonOutputsToInputNeuronsOutput copies output of Wilson Oscillator into input of legController Network
+*/
+void Network::copyWilsonOutputsToInputNeuronsOutput(void)
+{
+    neuronOutput[0] = networkOutputsW[0];
+    //cout<<endl<<networkOutputsW[0]<<endl;
+}
+
 
 /* --------------------------------------------------
 
@@ -206,7 +329,23 @@ void printDifferences(double* beforeMatrix, double* afterMatrix, int dimension) 
 
   It treates autapses and inputs specially so it is not strictly speaking pure matrix mathematics
   */
-
+/*
+void Network::networkActivation( void  )
+{
+//	fprintf(logFile, "1. networkActivation()\n");
+	int neuron_number, source_neuron_number;
+	// -- Update inputs from other neurons
+	for( neuron_number = 0; neuron_number < networkDimension; ++neuron_number)
+    {  // note that iterations can be reduced in this routine by skipping the inputs -- which do not need to be updated through network weights, they are set from the outside
+		for(source_neuron_number = 0; source_neuron_number < networkDimension; ++source_neuron_number)
+        {
+            neuronActivation[neuron_number] += neuronOutput[source_neuron_number] * networkWeights[computeWeightIndex(source_neuron_number, neuron_number)];
+            cout<<"neuron "<<source_neuron_number<<" to neuron "<<neuron_number<<": "<<neuronActivation[neuron_number]<<"+="<< neuronOutput[source_neuron_number]<<" * "<< networkWeights[computeWeightIndex(source_neuron_number, neuron_number)]<<endl;
+		}
+		cout<<endl;
+	}
+}
+*/
 void Network::networkActivation( void  )
 {
 	fprintf(logFile, "1. networkActivation()\n");
@@ -249,11 +388,9 @@ void Network::networkActivation( void  )
                    neuronActivation[neuron_number], neuron_number+1, networkInputs[neuron_number]);
 			neuronActivation[neuron_number] += networkInputs[neuron_number]; // Network inputs are set externally
             fprintf(logFile, " => %.4f\n", neuronActivation[neuron_number]);
-//printf("-- %2.3lf %2.3lf\n", neuronActivation[neuron_number], networkInputs[neuron_number]);
 		}
 	}
 }
-
 /* --------------------------------------------------
 
   setNetworkInput
@@ -268,14 +405,8 @@ void Network::setNetworkInput( double *vector)
 {
 	int i;
 
-	for(i = 0; i< numberOfInputs ; ++i) {
+	for(i = 0; i< numberOfInputs ; ++i)
 		networkInputs[i] = vector[i];
-//printf("input %d <= %lf\n",i, vector[i]);
-//printf("input %lf ",networkInputs[i]);
-
-	}
-//printf("\n ");
-
 }
 
 void Network::setNetworkInput(vector<double> values)
@@ -295,15 +426,8 @@ void Network::setNetworkInput(vector<double> values)
 
 void Network::copyNetworkInputsToInputNeuronOutputs( void )
 {
-	int i;
-
-	for(i = 0; i < numberOfInputs; ++i ) {
+	for(int i = 0; i < numberOfInputs; ++i )
 		neuronOutput[i] = networkInputs[i];
-//printf("input %lf ",networkNeuronOutput[i]);
-
-	}
-//printf("\n ");
-
 }
 
 /* --------------------------------------------------
@@ -318,44 +442,46 @@ void Network::copyNetworkInputsToInputNeuronOutputs( void )
 
 void Network::setNetworkOuput( void )
 {
-    fprintf(logFile, "4. setNetworkOutput()\n");
 	int i;
 
-	for(i = 0; i< numberOfOutputs; ++i) {
-		networkOutputs[i] = neuronOutput[numberOfInputs + numberOfInterNeurons + i];
-        fprintf(logFile, "networkOutput[%d] := neuronOutput[%d](%.4f)\n", i+1,
-               numberOfInputs + numberOfInterNeurons + i+1,
-               neuronOutput[numberOfInputs + numberOfInterNeurons + i]);
-//printf("* %d ",numberOfInputs + numberOfInterNeurons + i);
-//printf("* %lf ",networkNeuronOutput[numberOfInputs + numberOfInterNeurons -1 + i]);
-
+	for(i = 0; i< numberOfOutputs; ++i)
+    {
+        networkOutputs[i] = neuronOutput[numberOfInputs + numberOfInterNeurons + i];
 	}
-//printf("\n",networkOutputs[i]);
 
 }
 
-/* --------------------------------------------------
 
-  setNetworkNeuronOutput
+/*
+setNetworkOuputW( void ) WILSON Oscillator copy
 
 */
+void Network::setNetworkOuputW( void )
+{
+	for(int i = 0; i< numberOfWilsonOutputs; ++i)
+		networkOutputsW[i] = neuronOutputW[numberOfWilsonInputs + numberOfWilsonInterNeurons + i];
 
-//Network::setNetworkNeuronOutput( void )
+}
 
 void Network::copyNeuronActivationsToNeuronOutputs( void )
 {
-    fprintf(logFile, "2. copyNeuronActivationsToNeuronOutputs() (WARN) does nothing\n");
-	int i;
+//    fprintf(logFile, "2. copyNeuronActivationsToNeuronOutputs() \n");
 
-    // FIXME SL: This doesn't do anything; should it copy them to neuronOutput array?
-	for(i = 0; i < networkDimension; ++i){
-		neuronActivation[i] = neuronActivation[i];
-//printf("%2.2lf %2.2lf | ",networkNeuronOutput[i] , networkNeuronActivation[i]);
+	for(int i = 0; i < networkDimension; ++i)
+    {
+		neuronOutput[i] = neuronActivation[i];
 	}
-//printf("\n");
+
 
 }
-
+/*
+copyNeuronActivationsToNeuronOutputsW Wilson Oscillator copy
+*/
+void Network::copyNeuronActivationsToNeuronOutputsW( void )
+{
+    for(int i = 0; i < networkWilsonDimension; ++i)
+		neuronOutputW[i] = neuronActivationW[i];
+}
 /* --------------------------------------------------
 
   thresholdNeuronOutputs
@@ -367,18 +493,21 @@ void Network::copyNeuronActivationsToNeuronOutputs( void )
 void Network::thresholdNeuronOutputs( void )
 {
 	int i;
+	double j;
 
     fprintf(logFile, "3. thresholdNeuronOutputs()\n");
-	for(i = 0; i < networkDimension; ++i){
-		if(neuronActivation[i] > neuronThresholds[i]){
-			neuronOutput[i] = neuronActivation[i] - neuronThresholds[i];
-//			neuronActivation[i] = neuronActivation[i];
-		}
-		else neuronOutput[i] = 0.0;
-        fprintf(logFile, "neuronOutput[%d]: activation(%.4f) > threshold(%.4f)? ==> %.4f\n", i+1,
-               neuronActivation[i], neuronThresholds[i], neuronOutput[i]);
+	for(i = 1; i < networkDimension-2; ++i)
+    {
+        j=neuronThresholds[i] - .2;
+		if(neuronActivation[i] <= neuronThresholds[i] && neuronActivation[i] > j)
+        {
+			 neuronActivation[i] = neuronActivation[i];
+        }
+        else
+            neuronActivation [i] = 0;
+        fprintf(logFile, "neuronOutput[%d]: activation(%.4f) < threshold(%.4f) & activation(%.4f) > j (%.2f) ? ==> %.4f\n", i+1,
+               neuronActivation[i], neuronThresholds[i], neuronActivation[i], j, neuronActivation[i]) ;
 	}
-//printf("\n ");
 
 }
 
@@ -395,12 +524,8 @@ void Network::thresholdNeuronOutputs( void )
 
 void Network::squashNeuronOutputs( double offset=0, double expSlope=1)
 {
-	int i;
-
-	for(i = 0; i < networkDimension; ++i){
-			neuronOutput[i] = (1/(1+exp(-neuronActivation[i] * expSlope) ) + offset);
-
-	}
+	for(int i = 0; i < networkDimension; ++i)
+        neuronOutput[i] = (1/(1+exp(-neuronOutput[i] * expSlope)) + offset);
 }
 
 /* --------------------------------------------------
@@ -409,13 +534,23 @@ void Network::squashNeuronOutputs( double offset=0, double expSlope=1)
 
   a function meant to supply the network outputs to outside process
 
-*/
-void Network::getNetworkOuput( double * vector )
+
+void Network::getNetworkOuput( double* vector )
 {
 	int i;
 
 	for(i = 0; i< numberOfOutputs; ++i) {
 		vector[i] = networkOutputs[i];
+	}
+
+}
+*/
+void Network::getNetworkOuputW( double* array )
+{
+	int i;
+
+	for(i = 0; i< numberOfWilsonOutputs; ++i) {
+		array[i] = networkOutputsW[i];
 	}
 
 }
@@ -764,13 +899,34 @@ void Network::printNetworkOuput( void )
 */
 void Network::cycleNetwork( void )
 {
-    fprintf(logFile, "***** cycleNetwork\n");
-	networkActivation( );						// perform adjusted matrix multiplication of the weights and current network state
-//	setNetworkNeuronOutput( );					// Transform activations into outputs and copy
-	copyNeuronActivationsToNeuronOutputs( );
-	thresholdNeuronOutputs( );					// Transform activations into outputs following hard threshold
-	setNetworkOuput( );							// Copy the network output to the output array *+* consider moving this call out of the function to allow network "settling time" before external functions have access to the network output
+//    fprintf(logFile, "***** cycleNetwork\n");
+    /*if (tStep%4==0 && tStep!=0)
+    {
+        resetNeuronOutputs();
+        for (int i = 0; i< networkDimension; i++)
+            neuronActivation[i]=0;
+        networkInputs[0]+=.2;
+    }*/
+	copyNetworkInputsToInputNeuronOutputs();
 
+    //copyWilsonOutputsToInputNeuronsOutput();
+
+	networkActivation();
+							// perform adjusted matrix multiplication of the weights and current network state
+    copyNeuronActivationsToNeuronOutputs();
+    //thresholdNeuronOutputs();					// Transform activations into outputs following hard threshold
+    //squashNeuronOutputs(0,1);
+
+    setNetworkOuput();							// Copy the network output to the output array *+* consider moving this call out of the function to allow network "settling time" before external functions have access to the network output
+
+
+    tStep++;
+
+
+    fprintf(logFile, "The input is: %.4f, Outputs are:", neuronOutput[0]);
+    for( int i = 0 ; i < numberOfOutputs; ++i)
+        fprintf(logFile,"%.3f ",sigmoid_function(networkOutputs[i]));
+    fprintf(logFile,"\n");
 }
 
 
@@ -1128,13 +1284,26 @@ void Network::resetNeuronOutputs() {
  the appropriate array index. If a value is not found in the file, set it to the given
  default value
  */
-void Network::readRowFromFile(FILE* fp, short* array, short defaultVal) {
+void Network::readRowFromFile(FILE* fp, short* array) {
 	for( int i = 0 ; i < networkDimension; ++i) {
-		int items = fscanf(fp,"%lf",&array[i]);
-		if (items == 0) {
-			array[i] = defaultVal;
-		}
+		fscanf(fp,"%hf",&array[i]);
 	}
+}
+/*
+ Read the values from the file at the given file pointer and set each one into
+ the appropriate array index. If a value is not found in the file, set it to the given
+ default value
+ */
+void Network::readMultipleRowsFromFile(FILE* fp, short* array) {
+	for( int i = 0 ; i < networkDimension*networkDimension; ++i)
+		fscanf(fp,"%hf",&array[i]);
+}
+
+
+void Network::readRowFromFileW(FILE* fp, short* array)
+{
+	for( int i = 0 ; i < networkWilsonDimension; ++i)
+		fscanf(fp,"%hf",&array[i]);
 }
 
 /*
@@ -1142,14 +1311,28 @@ void Network::readRowFromFile(FILE* fp, short* array, short defaultVal) {
  the appropriate array index. If a value is not found in the file, set it to the given
  default value
  */
-void Network::readMultipleRowsFromFile(FILE* fp, short* array, short defaultVal) {
-	for( int i = 0 ; i < networkDimension*networkDimension; ++i) {
-		int items = fscanf(fp,"%lf",&array[i]);
-		if (items == 0) {
-			array[i] = defaultVal;
-		}
-	}
-
+void Network::readMultipleRowsFromFileW(FILE* fp, short* array) {
+	for( int i = 0 ; i < networkWilsonDimension*networkWilsonDimension; ++i)
+		fscanf(fp,"%hf",&array[i]);
+}
+/*
+ Read the values from the file at the given file pointer and set each one into
+ the appropriate array index. If a value is not found in the file, set it to the given
+ default value
+ */
+void Network::readMultipleRowsFromFileW(FILE* fp, double* array) {
+	for( int i = 0 ; i < networkWilsonDimension*networkWilsonDimension; ++i)
+		fscanf(fp,"%lf",&array[i]);
+}
+/*
+ Read the values from the file at the given file pointer and set each one into
+ the appropriate array index. If a value is not found in the file, set it to the given
+ default value
+ */
+void Network::readRowFromFileW(FILE* fp, double* array)
+{
+	for( int i = 0 ; i < networkWilsonDimension; ++i)
+    	fscanf(fp,"%lf",&array[i]);
 }
 
 /*
@@ -1157,29 +1340,23 @@ void Network::readMultipleRowsFromFile(FILE* fp, short* array, short defaultVal)
  the appropriate array index. If a value is not found in the file, set it to the given
  default value
  */
-void Network::readRowFromFile(FILE* fp, double* array, double defaultVal) {
-	for( int i = 0 ; i < networkDimension; ++i) {
-		int items = fscanf(fp,"%lf",&array[i]);
-		if (items == 0) {
-			array[i] = defaultVal;
-		}
-	}
+void Network::readRowFromFile(FILE* fp, double* array) {
+	for( int i = 0 ; i < networkDimension; ++i)
+		fscanf(fp,"%lf",&array[i]);
 }
+
 
 /*
  Read the values from the file at the given file pointer and set each one into
  the appropriate array index. If a value is not found in the file, set it to the given
  default value
  */
-void Network::readMultipleRowsFromFile(FILE* fp, double* array, double defaultVal) {
-	for( int i = 0 ; i < networkDimension*networkDimension; ++i) {
-		int items = fscanf(fp,"%lf",&array[i]);
-		if (items == 0) {
-			array[i] = defaultVal;
-		}
-	}
-
+void Network::readMultipleRowsFromFile(FILE* fp, double* array) {
+	for( int i = 0 ; i < networkDimension*networkDimension; ++i)
+		fscanf(fp,"%lf",&array[i]);
 }
+
+
 
 /* --------------------------------------------------
 
@@ -1194,7 +1371,7 @@ readNetworkFromFile
 int Network::readNetworkFromFile( std::string file_name )
 {
     printf("Reading file %s\n", file_name.c_str());
-	int i, error = 0;
+	int error = 0;
 	char dummy[MAX_DUMMY_STRING_LENGTH];
 	FILE *fp;
 	fp = fopen(file_name.c_str(),"r");
@@ -1205,46 +1382,107 @@ int Network::readNetworkFromFile( std::string file_name )
 		fscanf(fp,"%s %d",dummy, &numberOfInterNeurons);
 		fscanf(fp,"%s %d",dummy, &networkDimension); // perhaps networkDimension should be omitted from the Read and computed on the read or in the constructor
 
+
 	// Read the stored network activations
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, neuronActivation, 0.0);
-	// Read the stored network outputs
+		readRowFromFile(fp, neuronActivation);
+	//Read the stored network outputs
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, neuronOutput, 0.0);
+		readRowFromFile(fp, neuronOutput);
 	// Read the stored neuron thresholds
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, neuronThresholds, 0.0);
+		readRowFromFile(fp, neuronThresholds);
 	// Read the stored neuron learning rates
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, neuronLearningRate, 0.0);
+		readRowFromFile(fp, neuronLearningRate);
 	// Read the stored neuron refractory states
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, neuronRefractoryState, 0);
+		readRowFromFile(fp, neuronRefractoryState);
 	// Read the stored neuron refractory states
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, neuronWeightTotal, 1.0);
+		readRowFromFile(fp, neuronWeightTotal);
 	// Read the stored network weights
 		fscanf(fp,"%s",dummy);
-		readMultipleRowsFromFile(fp, networkWeights, 0.0);
-//		for( i = 0 ; i < networkDimension*networkDimension; ++i) fscanf(fp,"%lf",&networkWeights[i]);
+		readMultipleRowsFromFile(fp, networkWeights);
 	// Read the stored network inputs
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, networkInputs, 0.0);
+		readRowFromFile(fp, networkInputs);
 		fscanf(fp,"%s",dummy);
 	// Read the stored network outputs
 		fscanf(fp,"%s",dummy);
-		readRowFromFile(fp, networkOutputs, 0.0);
+		readRowFromFile(fp, networkOutputs);
 	// Read the stored network plastic weights mask
 		fscanf(fp,"%s",dummy);
-		readMultipleRowsFromFile(fp, plasticWeightsMask, 0.0);
-//		for( i = 0 ; i < networkDimension*networkDimension; ++i) fscanf(fp,"%d",&plasticWeightsMask[i]);
+		readMultipleRowsFromFile(fp, plasticWeightsMask);
 	}
 
 	fclose(fp);
 	return(error);
 }
 
+/*
+ALTERED TEMPORARILY
+*/
+
+int Network::readNetworkFromFileW( std::string file_name )
+{
+    printf("Reading file %s\n", file_name.c_str());
+	int error = 0;
+	char dummy[MAX_DUMMY_STRING_LENGTH];
+	FILE *fp;
+	fp = fopen(file_name.c_str(),"r");
+	if (fp == NULL) error = 1;
+	else
+    {
+		fscanf(fp,"%s %d",dummy, &numberOfWilsonInputs);
+		fscanf(fp,"%s %d",dummy, &numberOfWilsonOutputs);
+		fscanf(fp,"%s %d",dummy, &numberOfWilsonInterNeurons);
+		fscanf(fp,"%s %d",dummy, &networkWilsonDimension);
+
+	// Read the stored network activations
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, neuronActivationW);
+	//Read the stored network outputs
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, neuronOutputW);
+	// Read the stored neuron thresholds
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, neuronThresholdsW);
+	// Read the stored neuron learning rates
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, neuronLearningRateW);
+	// Read the stored neuron refractory states
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, neuronRefractoryStateW);
+	// Read the stored neuron refractory states
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, neuronWeightTotalW);
+	// Read the stored network weights
+		fscanf(fp,"%s",dummy);
+		readMultipleRowsFromFileW(fp, networkWeightsW);
+	// Read the stored network inputs
+		fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, networkInputsW);
+		fscanf(fp,"%s",dummy);
+	// Read the stored network outputs
+		fscanf(fp,"%s",dummy);
+		//fscanf(fp,"%s",dummy);
+		readRowFromFileW(fp, networkOutputsW);
+		//networkOutputsW[0] = networkOutputsW[1] = 0.0;
+	// Read the stored network plastic weights mask
+		fscanf(fp,"%s",dummy);
+		readMultipleRowsFromFileW(fp, plasticWeightsMaskW);
+	}
+
+	fclose(fp);
+	return(error);
+}
+
+
 /* --------------------------------------------------
+
+
+
 
 writeNetworkToFile
 
@@ -1259,6 +1497,7 @@ int Network::writeNetworkToFile( std::string file_name )
 	FILE *fp;
 	fp= fopen(file_name.c_str(),"w");
 
+
 	if( fp == 0) error = 1;
 	else{
 		fprintf(fp,"numberOfInputs %d\n",numberOfInputs);
@@ -1268,33 +1507,33 @@ int Network::writeNetworkToFile( std::string file_name )
 
 	// Write the stored network activations
 		fprintf(fp,"networkActivations\n");
-		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%lf ",neuronActivation[i]);
+		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%.2f ",neuronActivation[i]);
 		fprintf(fp,"\n");
 	// Write the stored network outputs
 		fprintf(fp,"networkOutputs\n");
-		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%lf ",neuronOutput[i]);
+		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%.2f ",neuronOutput[i]);
 		fprintf(fp,"\n");
 	// Write the stored network thresholds
 		fprintf(fp,"neuronThreshold\n");
-		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%lf ",neuronThresholds[i]);
+		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%.2f ",neuronThresholds[i]);
 		fprintf(fp,"\n");
 	// Write the stored neuron learning rates
 		fprintf(fp,"neuronLearningRate\n");
-		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%lf ",neuronLearningRate[i]);
+		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%.2f ",neuronLearningRate[i]);
 		fprintf(fp,"\n");
 	// Write the stored neuron refractory states
 		fprintf(fp,"neuronRefactoryState\n");
-		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%lf ",neuronRefractoryState[i]);
+		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%.2f ",neuronRefractoryState[i]);
 		fprintf(fp,"\n");
 	// Write the stored neuron weight total
 		fprintf(fp,"neuronWeightTotal\n");
-		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%lf ",neuronWeightTotal[i]);
+		for( i = 0 ; i < networkDimension; ++i) fprintf(fp,"%.2f ",neuronWeightTotal[i]);
 		fprintf(fp,"\n");
 	// Write the stored network weights
 		fprintf(fp,"networkweights\n");
 		item_count = 0;		// Set up counter for number of rows printed
 		for( i = 0 ; i < networkDimension*networkDimension; ++i){
-			fprintf(fp,"%lf ",networkWeights[i]);
+			fprintf(fp,"%.2f ",networkWeights[i]);
 			++item_count;
 			if(item_count == networkDimension){
 				fprintf(fp,"\n");       // place a new line after each row printed to make reading of the output file intuitive
@@ -1304,11 +1543,11 @@ int Network::writeNetworkToFile( std::string file_name )
 		fprintf(fp,"\n");
 	// Write the stored network inputs
 		fprintf(fp,"networkinputs\n");
-		for( i = 0 ; i < numberOfInputs; ++i) fprintf(fp,"%lf ",networkInputs[i]);
+		for( i = 0 ; i < numberOfInputs; ++i) fprintf(fp,"%.2f ",networkInputs[i]);
 		fprintf(fp,"\n");
 	// Write the stored network outputs
 		fprintf(fp,"networkoutputs\n");
-		for( i = 0 ; i < numberOfOutputs; ++i) fprintf(fp,"%lf ",networkOutputs[i]);
+		for( i = 0 ; i < numberOfOutputs; ++i) fprintf(fp,"%.2f ",networkOutputs[i]);
 		fprintf(fp,"\n");
 	// Write the stored plastic weights mask
 		fprintf(fp,"networkplasticweightsmask\n");
@@ -1317,6 +1556,82 @@ int Network::writeNetworkToFile( std::string file_name )
 			fprintf(fp,"%d ",plasticWeightsMask[i]);
 			++item_count;
 			if(item_count == networkDimension){  // place a new line after each row printed to make reading of the output file intuitive
+				fprintf(fp,"\n");
+				item_count = 0;
+			}
+		}
+		fprintf(fp,"\n");
+	}
+
+	fclose(fp);
+	return(error);
+}
+
+int Network::writeNetworkToFileW( std::string file_name )
+{
+	int i, item_count = 0, error = 0;
+	FILE *fp;
+	fp= fopen(file_name.c_str(),"w");
+
+
+	if( fp == 0) error = 1;
+	else{
+		fprintf(fp,"numberOfInputs %d\n",numberOfWilsonInputs);
+		fprintf(fp,"numberOfOutputs %d\n",numberOfWilsonOutputs);
+		fprintf(fp,"numberOfInterNeurons %d\n",numberOfWilsonInterNeurons);
+		fprintf(fp,"networkDimension %d\n",networkWilsonDimension); // perhaps this should be omitted from the write and computed on the read or in the constructor
+
+	// Write the stored network activations
+		fprintf(fp,"networkActivations\n");
+		for( i = 0 ; i < networkWilsonDimension; ++i) fprintf(fp,"%.2f ",neuronActivationW[i]);
+		fprintf(fp,"\n");
+	// Write the stored network outputs
+		fprintf(fp,"networkOutputs\n");
+		for( i = 0 ; i < networkWilsonDimension; ++i) fprintf(fp,"%.2f ",neuronOutputW[i]);
+		fprintf(fp,"\n");
+	// Write the stored network thresholds
+		fprintf(fp,"neuronThreshold\n");
+		for( i = 0 ; i < networkWilsonDimension; ++i) fprintf(fp,"%.2f ",neuronThresholdsW[i]);
+		fprintf(fp,"\n");
+	// Write the stored neuron learning rates
+		fprintf(fp,"neuronLearningRate\n");
+		for( i = 0 ; i < networkWilsonDimension; ++i) fprintf(fp,"%.2f ",neuronLearningRateW[i]);
+		fprintf(fp,"\n");
+	// Write the stored neuron refractory states
+		fprintf(fp,"neuronRefactoryState\n");
+		for( i = 0 ; i < networkWilsonDimension; ++i) fprintf(fp,"%.2f ",neuronRefractoryStateW[i]);
+		fprintf(fp,"\n");
+	// Write the stored neuron weight total
+		fprintf(fp,"neuronWeightTotal\n");
+		for( i = 0 ; i < networkWilsonDimension; ++i) fprintf(fp,"%.2f ",neuronWeightTotalW[i]);
+		fprintf(fp,"\n");
+	// Write the stored network weights
+		fprintf(fp,"networkweights\n");
+		item_count = 0;		// Set up counter for number of rows printed
+		for( i = 0 ; i < networkWilsonDimension*networkWilsonDimension; ++i){
+			fprintf(fp,"%.2f ",networkWeightsW[i]);
+			++item_count;
+			if(item_count == networkWilsonDimension){
+				fprintf(fp,"\n");       // place a new line after each row printed to make reading of the output file intuitive
+				item_count = 0;
+			}
+		}
+		fprintf(fp,"\n");
+	// Write the stored network inputs
+		fprintf(fp,"networkinputs\n");
+		for( i = 0 ; i < numberOfWilsonInputs; ++i) fprintf(fp,"%.2f ",networkInputsW[i]);
+		fprintf(fp,"\n");
+	// Write the stored network outputs
+		fprintf(fp,"networkoutputs\n");
+		for( i = 0 ; i < numberOfWilsonOutputs; ++i) fprintf(fp,"%.2f ",networkOutputsW[i]);
+		fprintf(fp,"\n");
+	// Write the stored plastic weights mask
+		fprintf(fp,"networkplasticweightsmask\n");
+		item_count = 0;		// Set up counter for number of rows printed
+		for( i = 0 ; i < networkWilsonDimension*networkWilsonDimension; ++i){
+			fprintf(fp,"%d ",plasticWeightsMaskW[i]);
+			++item_count;
+			if(item_count == networkWilsonDimension){  // place a new line after each row printed to make reading of the output file intuitive
 				fprintf(fp,"\n");
 				item_count = 0;
 			}
@@ -1450,16 +1765,21 @@ void Network::printNetworkOutputState( void )
 
 }
 
-/* --------------------------------------------------
-
-writeNetworkOutputToFile
-
-	takes as input a file name
-   writes the file to be formatted according to the standard network form
-   changes to this should be mirrored in readNetworkFromFile
-
-*/
 int Network::computeWeightIndex( int source_neuron_number, int target_neuron_number )
 {
 	return( networkDimension*source_neuron_number + target_neuron_number );
+}
+
+
+int Network::computeWeightIndexW( int source_neuron_number, int target_neuron_number )
+{
+	return( networkWilsonDimension*source_neuron_number + target_neuron_number );
+}
+
+double Network::sigmoid_function(double x)
+
+{
+	double sigmoid = 1 / (1 + exp(-x));
+
+	return sigmoid;
 }

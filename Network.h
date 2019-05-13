@@ -14,17 +14,18 @@
 
 #include <string>
 #include <vector>
+#include <fstream>
 
-#define MAX_NET_DIMENSION 100
-#define MAX_NET_INPUTS 10		// Cannot exceed the size of the net
-#define MAX_NET_OUTPUTS 10		// Cannot exceed the size of the net
+#define MAX_NET_DIMENSION 25
+#define MAX_NET_INPUTS 2		// Cannot exceed the size of the net
+#define MAX_NET_OUTPUTS 2		// Cannot exceed the size of the net
 #define MAX_DUMMY_STRING_LENGTH 30
 
 class Network
 {
 public:
 	Network();								// default network constructor.
-	Network( std::string file_name );	// Construct the network from a stored file.
+	Network( std::string file_name, bool decider );	// Construct the network from a stored file.
 	Network(int inputs, int interneurons, int outputs, char * file_name ); // construct a blank network to user specified size and write it to a file for later editing
 	virtual ~Network();
 
@@ -36,6 +37,13 @@ private:
 	int numberOfOutputs;
 	int numberOfInterNeurons;
 	int networkDimension;
+    int timestep = 0;
+    int tStep = 0;
+
+    int numberOfWilsonInputs;
+	int numberOfWilsonOutputs;
+	int numberOfWilsonInterNeurons;
+	int networkWilsonDimension;
 
 	double neuronActivation[MAX_NET_DIMENSION];		// Individual neurons have individual activation levels that are tracked through timesteps an are not visibile as output ( transformed to output by a function)
 	double neuronOutput[MAX_NET_DIMENSION];			// The output of individual neurons, used as inputs to the other neurons in the network throught the connection weights matrix
@@ -49,16 +57,38 @@ private:
 	short int  plasticWeightsMask[MAX_NET_DIMENSION*MAX_NET_DIMENSION]; // a filter. Plastic weights are = 1, fixed = 0. THis allows for the specification of some fixed and some plastic weights in the same neuron. This could be a binary array ( type bool) to save space.
     FILE* logFile;
 
+    double neuronActivationW [MAX_NET_DIMENSION];		// Individual neurons have individual activation levels that are tracked through timesteps an are not visibile as output ( transformed to output by a function)
+	double neuronOutputW [MAX_NET_DIMENSION];			// The output of individual neurons, used as inputs to the other neurons in the network throught the connection weights matrix
+	double neuronThresholdsW [MAX_NET_DIMENSION];		// Individual Neurons each have a speficifed activation threshold
+	double neuronLearningRateW [MAX_NET_DIMENSION];	// Individual Neurons each have a speficifed learning rate -- rate of change of connection strength per time step
+	short int neuronRefractoryStateW [MAX_NET_DIMENSION];	// Individual Neurons each have a speficifed period during which output is blocked -- should be 0 or greater.
+	double neuronWeightTotalW [MAX_NET_DIMENSION];	// Individual Neurons each have a speficifed total weight strength in their input connections.
+	double networkWeightsW [MAX_NET_DIMENSION*MAX_NET_DIMENSION];
+	double networkInputsW [MAX_NET_INPUTS];
+	double networkOutputsW [MAX_NET_OUTPUTS];
+	short int  plasticWeightsMaskW [MAX_NET_DIMENSION*MAX_NET_DIMENSION];
+    FILE* motorOutputFile;
+
 	// Functions -------------------------
 	bool openLogFile();
+	bool openMotorOutputFile();
 	void closeLogFile();
+	void closeMotorOutputFile();
 
 	void instantiateDefaultNetwork( void );
 	void setNetworkOuput( void );
+
+    void setNetworkOuputW( void );                           //WILSON COPY
 	void copyNeuronActivationsToNeuronOutputs( void );
+
+    void copyNeuronActivationsToNeuronOutputsW( void );      //WISLON COPY
 	void copyNetworkInputsToInputNeuronOutputs( void );
 	void thresholdNeuronOutputs( void );
-	//******void squashNeuronOutputs( void );
+	void wilsonBoundNetworkOutputs(void);
+	void wilsonActivation(void);
+
+	void copyWilsonOutputsToInputNeuronsOutput(void);
+
 	void squashNeuronOutputs( double offset, double expSlope);
 	void setNeuronOutput( double value );
 	void setNeuronThresholds( double value );
@@ -78,12 +108,24 @@ private:
 	void normalizeNonDiagonalExcitatoryNeuronWeights( void );
 	void setNeuronWeightTotal( double value);
 	int computeWeightIndex( int source_neuron_number, int target_neuron_number );
-	void readRowFromFile(FILE* fp, short* array, short defaultVal);
-	void readMultipleRowsFromFile(FILE* fp, short* array, short defaultVal);
-	void readRowFromFile(FILE* fp, double* array, double defaultVal);
-	void readMultipleRowsFromFile(FILE* fp, double* array, double defaultVal);
+	void readRowFromFile(FILE* fp, short* array);
+	void readMultipleRowsFromFile(FILE* fp, short* array);
+	void readRowFromFile(FILE* fp, double* array);
+	void readMultipleRowsFromFile(FILE* fp, double* array);
+
+	void readRowFromFileW(FILE* fp, short* array);
+	void readMultipleRowsFromFileW(FILE* fp, short* array);
+	void readRowFromFileW(FILE* fp, double* array);
+	void readMultipleRowsFromFileW(FILE* fp, double* array);
+    int computeWeightIndexW( int source_neuron_number, int target_neuron_number );
+
+    double sigmoid_function(double x);
+
+
+
 public:
-	void cycleNetwork( void );
+    void wilsonCycleNetwork(void);
+    void cycleNetwork( void );
 	void cycleNetworkSquash(  double offset, double expSlope );
 	void cycleNetworkNormalizeHebbianLearning( void );
 	void printNetworkOuput( void );
@@ -99,7 +141,7 @@ public:
 	void writeNetworkWeightsToFile( std::string file_name );
 	void setNetworkInput( double *vector);
 	void setNetworkInput(std::vector<double>);
-	void getNetworkOuput( double * vector );
+	//void getNetworkOuput( double* vector );
 	int readNetworkFromFile( std::string file_name);
 	int writeNetworkToFile( std::string file_name );
 	double*getNetworkWeights();
@@ -107,16 +149,24 @@ public:
 	void PrintNetworkState( void);
 	void printNetworkWeights();
 
+
+    void getNetworkOuputW( double* array );
+
 	int getNetworkDimension();
 	int getNumInputs();
 	int getNumOutputs();
 	FILE* getLogFile();
+    FILE* getMotorOutputFile();
+
+    int readNetworkFromFileW( std::string file_name);
+    int writeNetworkToFileW( std::string file_name );
 
 	/*
 	 * Update the weight between two neurons to the given value. Neurons are 1-indexed.
 	 */
 	void updateWeight(int from_neuron, int to_neuron, double new_weight);
 
+	void printStuff();
 	/*
 	 * Reset the stored outputs of all neurons.
 	 */
